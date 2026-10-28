@@ -31,7 +31,95 @@ function render(e,c){
   document.querySelectorAll('.seg button').forEach(b=>b.classList.toggle('act',b.dataset.m===c.modo));
   $('on').disabled=$('off').disabled=c.modo!=='manual';
   renderWater();}
-function renderData(){if(!S)return;const h=S.historial;render(S.estado,S.control);
+
+function renderAvisos(e) {
+  const contenedor = $('alarmas');
+  if (!contenedor) return;
+
+  const avisos = [];
+  const agregar = (tipo, texto) => avisos.push({ tipo, texto });
+
+  const edad = e.ts
+    ? (Date.now() - new Date(e.ts).getTime()) / 1000
+    : Infinity;
+
+  if (edad > 60) {
+    agregar(
+      'warn',
+      'Sin datos recientes del ESP32. Los estados siguientes son la última lectura, no una confirmación del estado actual.'
+    );
+  }
+
+  if (!e.ts) {
+    agregar('info', 'Todavía no se ha recibido una lectura.');
+  } else {
+    if (e.lsh201 && !e.lsl202) {
+      agregar(
+        'danger',
+        'MANTENIMIENTO: LSH-201 activo y LSL-202 inactivo. Revisar sensores, cableado y polaridad. La bomba debe permanecer bloqueada.'
+      );
+    }
+
+    if (e.lsh201) {
+      agregar(
+        e.bomba ? 'danger' : 'info',
+        e.bomba
+          ? 'ALARMA: el ESP32 reporta tanque lleno y bomba encendida. Revisar inmediatamente el control y la salida.'
+          : 'Tanque aéreo lleno: llenado detenido por nivel alto.'
+      );
+    }
+
+    if (!e.ls101) {
+      agregar(
+        e.bomba ? 'danger' : 'warn',
+        e.bomba
+          ? 'ALARMA: bomba reportada encendida sin agua disponible en el tanque subterráneo.'
+          : 'Sin agua disponible en el tanque subterráneo: bomba bloqueada.'
+      );
+    }
+
+    if (e.fallo === 1) {
+      agregar(
+        'danger',
+        `El ESP32 reporta una condición de falla. Código: ${e.codigo ?? 'no informado'}.`
+      );
+    } else if (e.fallo === null || e.fallo === undefined) {
+      agregar(
+        'warn',
+        'Esta lectura todavía no incluye el indicador de falla. Actualiza el firmware del ESP32.'
+      );
+    }
+
+    if (!avisos.length) {
+      agregar('ok', 'Sin advertencias en la última lectura recibida.');
+    }
+  }
+
+  // textContent evita interpretar los mensajes como HTML.
+  contenedor.replaceChildren();
+
+  for (const aviso of avisos) {
+    const div = document.createElement('div');
+    div.className = `aviso ${aviso.tipo}`;
+    div.textContent = aviso.texto;
+    contenedor.appendChild(div);
+  }
+
+  // Solo se limita el botón de encendido; se conserva el de apagado.
+  $('on').disabled =
+    S.control.modo !== 'manual' ||
+    edad > 60 ||
+    !e.ls101 ||
+    !!e.lsh201 ||
+    e.fallo !== 0;
+}
+
+function renderData() {
+  if (!S) return;
+
+  const h = S.historial;
+  render(S.estado, S.control);
+  renderAvisos(S.estado);
   chart.data.labels=h.map(x=>new Date(x.t).toLocaleTimeString('es-VE'));
   chart.data.datasets[0].data=h.map(x=>x.b);chart.data.datasets[1].data=h.map(x=>x.ls);
   chart.data.datasets[2].data=h.map(x=>x.lsh);chart.data.datasets[3].data=h.map(x=>x.lsl);chart.update();
@@ -52,8 +140,23 @@ $('clear').onclick=async()=>{try{await fetch('/api/reset');}catch{}
   if(S){S.historial=[];renderData();}};
 // Animación de llenado: solo con lo que envía el ESP32.
 // Llena mientras la bomba trabaja con agua abajo; LSH-201 lo marca lleno; LSL-202 lo limita a bajo.
-function tick(){if(!S)return;const e=S.estado;
-  if(e.lsh201)est=100;else if(e.lsl202)est=Math.min(est,20);
-  if(e.bomba&&e.ls101)est=Math.min(100,est+1.5);
-  renderWater();}
-setInterval(()=>poll(),3000);setInterval(tick,700);poll();
+function tick() {
+  if (!S || !apiOK || !S.estado.ts) return;
+
+  const e = S.estado;
+  const edad = (Date.now() - new Date(e.ts).getTime()) / 1000;
+
+  if (edad > 60) return;
+
+  if (e.lsh201) {
+    est = 100;
+  } else if (!e.lsl202) {
+    est = Math.min(est, 20);
+  }
+
+  if (e.bomba && e.ls101 && !e.lsh201 && e.fallo === 0) {
+    est = Math.min(100, est + 1.5);
+  }
+
+  renderWater();
+}
