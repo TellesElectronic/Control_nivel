@@ -1,0 +1,67 @@
+<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Monitoreo de Tanque Aéreo · UPT Aragua</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<link rel="stylesheet" href="style.css"></head><body>
+<header><img src="logo-upt.jpg" alt="Logo Universidad Politécnica Territorial de Aragua Federico Brito Figueroa">
+<div><h1>Monitoreo de llenado de tanque aéreo</h1><p>Universidad Politécnica Territorial de Aragua "Federico Brito Figueroa" · ESP32 + IoT</p></div>
+<div class="conn"><span id="dot" class="dot"></span><span id="connTxt">Conectando…</span></div></header>
+<main>
+<section class="card scene"><h2>Proceso</h2>
+<svg viewBox="0 0 560 400" id="svg">
+ <defs><linearGradient id="w" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4fb3ff"/><stop offset="1" stop-color="#1769c2"/></linearGradient>
+ <clipPath id="ca"><rect x="330" y="30" width="120" height="150" rx="16"/></clipPath>
+ <clipPath id="cs"><rect x="40" y="250" width="130" height="120" rx="10"/></clipPath></defs>
+ <rect x="0" y="230" width="560" height="170" fill="#e9e2d6"/><line x1="0" y1="230" x2="560" y2="230" stroke="#8a7a62" stroke-width="2"/>
+ <text x="10" y="248" class="lbl">Suelo</text>
+ <!-- torre -->
+ <path d="M345 180 L330 230 M435 180 L450 230 M338 205 L442 205" stroke="#6b7a8c" stroke-width="5" fill="none"/>
+ <!-- tanque aéreo -->
+ <rect x="330" y="30" width="120" height="150" rx="16" fill="#f4f8fc" stroke="#33465e" stroke-width="3"/>
+ <g clip-path="url(#ca)"><rect id="wa" x="330" y="180" width="120" height="0" fill="url(#w)"/></g>
+ <rect x="330" y="30" width="120" height="150" rx="16" fill="none" stroke="#33465e" stroke-width="3"/>
+ <text id="pctA" x="390" y="112" text-anchor="middle" class="big">Vacío</text>
+ <!-- sensores aéreo -->
+ <line x1="450" y1="45" x2="470" y2="45" stroke="#33465e"/><circle id="sLSH" cx="478" cy="45" r="7" class="led"/><text x="490" y="49" class="lbl">LSH-201</text>
+ <line x1="450" y1="165" x2="470" y2="165" stroke="#33465e"/><circle id="sLSL" cx="478" cy="165" r="7" class="led"/><text x="490" y="169" class="lbl">LSL-202</text>
+ <!-- tanque subterráneo -->
+ <rect x="40" y="250" width="130" height="120" rx="10" fill="#f4f8fc" stroke="#33465e" stroke-width="3"/>
+ <g clip-path="url(#cs)"><rect id="ws" x="40" y="370" width="130" height="0" fill="url(#w)"/></g>
+ <rect x="40" y="250" width="130" height="120" rx="10" fill="none" stroke="#33465e" stroke-width="3"/>
+ <line x1="100" y1="355" x2="100" y2="330" stroke="#33465e"/><circle id="sLS" cx="100" cy="355" r="7" class="led"/><text x="60" y="390" class="lbl">LS-101 · Subterráneo</text>
+ <!-- tuberías -->
+ <path id="pipe" d="M150 340 L240 340 M300 340 L310 340 L310 20 L390 20 L390 30" stroke="#9aa8b8" stroke-width="10" fill="none" stroke-linejoin="round"/>
+ <path id="flow" d="M150 340 L240 340 M300 340 L310 340 L310 20 L390 20 L390 30" stroke="#4fb3ff" stroke-width="4" fill="none" stroke-dasharray="10 12" opacity="0"/>
+ <!-- bomba -->
+ <g id="pump"><rect x="236" y="318" width="68" height="44" rx="8" fill="#c8303a" stroke="#6d1218" stroke-width="2"/>
+ <circle cx="270" cy="340" r="13" fill="#e9eef3"/><g id="rotor"><line x1="270" y1="329" x2="270" y2="351" stroke="#33465e" stroke-width="3"/><line x1="259" y1="340" x2="281" y2="340" stroke="#33465e" stroke-width="3"/></g></g>
+ <text x="270" y="380" text-anchor="middle" class="lbl">Bomba P-01</text>
+ <text x="390" y="250" text-anchor="middle" class="lbl">Tanque aéreo</text>
+</svg></section>
+
+<section class="card"><h2>Estado</h2>
+ <div class="kpis">
+  <div><span>Nivel aéreo</span><b id="kN">—</b></div>
+  <div><span>Bomba</span><b id="kB">—</b></div>
+  <div><span>Modo</span><b id="kM">—</b></div>
+  <div><span>Última lectura</span><b id="kT" class="mono">—</b></div>
+ </div>
+ <table class="sens"><tr><td>LS-101</td><td>Agua en tanque subterráneo</td><td id="tLS"></td></tr>
+ <tr><td>LSH-201</td><td>Nivel alto tanque aéreo</td><td id="tLSH"></td></tr>
+ <tr><td>LSL-202</td><td>Nivel bajo tanque aéreo</td><td id="tLSL"></td></tr></table>
+ <h2>Control manual · tanque subterráneo</h2>
+ <div class="seg"><button data-m="auto">Automático</button><button data-m="manual">Manual</button></div>
+ <div class="btns"><button id="on" class="go">Encender bomba</button><button id="off" class="stop">Apagar bomba</button></div>
+ <p class="note" id="note">La web no calcula nada: la bomba y los sensores que ves son exactamente los que reporta el ESP32. En modo manual, la orden llega al ESP32 por GET y él decide, con su protección de marcha en seco (LS-101).</p>
+</section>
+
+<section class="card wide"><h2>Historial de sensores y bomba</h2><div class="chartbox"><canvas id="ch"></canvas></div></section>
+
+<section class="card wide"><div class="cardhead"><h2>Lecturas del ESP32</h2><button id="clear" class="clrb">Vaciar historial</button></div>
+<div class="tbox"><table class="data"><thead><tr><th>Hora</th><th>Dispositivo</th><th>LS-101</th><th>LSH-201</th><th>LSL-202</th><th>Bomba</th><th>Modo</th></tr></thead><tbody id="tb"></tbody></table></div>
+<p class="note" id="tbEmpty">Sin lecturas todavía. Cuando el ESP32 envíe datos por GET, aparecerán aquí. Las lecturas más recientes van arriba.</p>
+</section>
+
+</main>
+<footer>UPT Aragua "Federico Brito Figueroa" · Proyecto de automatización e IoT</footer>
+<script src="app.js"></script></body></html>
