@@ -6,10 +6,16 @@ const chart=new Chart($('ch'),{type:'line',data:{labels:[],datasets:[
  {label:'LSL-202',data:[],borderColor:'#123a8c',stepped:true,pointRadius:0}]},
  options:{maintainAspectRatio:false,animation:false,
   scales:{y:{min:0,max:1.2,ticks:{stepSize:1,callback:v=>['','OFF','ON'][v]||''}}}}});
-$('ep').textContent=`GET ${location.origin}/api/data?ls101=1&lsh201=0&lsl202=0&bomba=0&id=ESP32-01&fmt=txt
+// Mostrar las instrucciones solamente si existe su contenedor.
+const ep = document.getElementById('ep');
+
+if (ep) {
+  ep.textContent =
+`GET ${location.origin}/api/data?ls101=1&lsh201=0&lsl202=0&bomba=0&id=ESP32-01&fmt=txt
 Respuesta: BOMBA=1;MODO=manual   (o JSON: {"ok":true,"bomba":1,"modo":"manual"})
 Control:  GET ${location.origin}/api/control?modo=manual&bomba=1
 Vaciar:   GET ${location.origin}/api/reset`;
+}
 function nivelLabel(v){return v>=98?'Lleno':v>=70?'Alto':v>=40?'Medio':v>2?'Bajo':'Vacío';}
 function renderWater(){
   $('wa').setAttribute('height',1.5*est);$('wa').setAttribute('y',180-1.5*est);
