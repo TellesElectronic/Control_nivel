@@ -37,3 +37,33 @@ td.num{font-family:'IBM Plex Mono',monospace}
 .cardhead{display:flex;justify-content:space-between;align-items:center;gap:12px}
 .clrb{background:#c8303a;color:#fff;border:0;border-radius:8px;padding:8px 14px;font:inherit;font-size:.8rem;font-weight:600;cursor:pointer}
 .clrb:hover{background:#a52630}
+.aviso {
+  padding: 12px 14px;
+  margin: 8px 0;
+  border-left: 5px solid;
+  border-radius: 8px;
+}
+
+.aviso.ok {
+  color: #155724;
+  background: #e8f5e9;
+  border-color: #269653;
+}
+
+.aviso.info {
+  color: #164b75;
+  background: #e8f2fc;
+  border-color: #287bb5;
+}
+
+.aviso.warn {
+  color: #795600;
+  background: #fff4d5;
+  border-color: #d69a00;
+}
+
+.aviso.danger {
+  color: #842029;
+  background: #fbe9eb;
+  border-color: #c8303a;
+}
