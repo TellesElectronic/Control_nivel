@@ -1,143 +1,125 @@
 // ============================================================
-// MONITOREO DE TANQUE AÉREO · UPT ARAGUA
+// MONITOREO DIDÁCTICO DE TANQUE AÉREO · UPT ARAGUA
+// ============================================================
 //
-// Convención de sensores:
-// LS-101  = 1: hay agua disponible en el tanque subterráneo.
-// LSH-201 = 1: el agua alcanzó el sensor superior.
-// LSL-202 = 1: el agua alcanzó el sensor inferior.
+// OBJETIVO:
+// - Representar los estados enviados por el ESP32.
+// - Mostrar advertencias para que el estudiante revise su programa.
+// - No corregir automáticamente una salida incorrecta.
+// - No bloquear órdenes manuales por sensores o indicador de falla.
 //
-// La web muestra lo reportado por el ESP32.
-// Las protecciones físicas deben ejecutarse en el ESP32.
+// CONVENCIÓN:
+// ls101  = 1: agua disponible en tanque subterráneo.
+// lsh201 = 1: agua presente en sensor superior del tanque aéreo.
+// lsl202 = 1: agua presente en sensor inferior del tanque aéreo.
+// bomba  = 1: el ESP32 reporta su salida de bomba encendida.
+// fallo  = 1: el ESP32 reporta una condición de falla.
+//
+// IMPORTANTE:
+// "bomba" representa una salida reportada, no una confirmación
+// física de funcionamiento del motor.
+//
+// El nivel dibujado es ilustrativo. No es un porcentaje medido.
 // ============================================================
 
+
+// ============================================================
+// 1. VARIABLES GENERALES
+// ============================================================
+
+// Acceso abreviado a los elementos del HTML.
 const $ = id => document.getElementById(id);
 
+// Última respuesta válida recibida de la API.
 let S = null;
+
+// Indica si la última consulta de datos terminó correctamente.
 let apiOK = false;
+
+// Altura ilustrativa del agua del tanque aéreo: 0 a 100.
 let est = 0;
+
+// Evitan solicitudes duplicadas del mismo tipo.
 let consultando = false;
 let enviandoControl = false;
+
+// Objeto de la gráfica, si Chart.js está disponible.
 let chart = null;
 
+// Frecuencia de consulta y actualización visual.
+const INTERVALO_CONSULTA_MS = 3000;
+const INTERVALO_ANIMACION_MS = 700;
+
+// Solo genera advertencias de antigüedad.
+// NO bloquea botones ni detiene la representación.
 const MAX_EDAD_SEGUNDOS = 60;
 
+
 // ============================================================
-// GRÁFICA
-// Si Chart.js no está disponible, la tabla y los avisos
-// pueden seguir funcionando.
+// 2. FUNCIONES AUXILIARES
 // ============================================================
 
-if (typeof Chart !== 'undefined' && $('ch')) {
-  chart = new Chart($('ch'), {
-    type: 'line',
-
-    data: {
-      labels: [],
-
-      datasets: [
-        {
-          label: 'Bomba',
-          data: [],
-          borderColor: '#c8303a',
-          stepped: true,
-          pointRadius: 0
-        },
-        {
-          label: 'LS-101',
-          data: [],
-          borderColor: '#1a9b55',
-          stepped: true,
-          pointRadius: 0
-        },
-        {
-          label: 'LSH-201',
-          data: [],
-          borderColor: '#e08b00',
-          stepped: true,
-          pointRadius: 0
-        },
-        {
-          label: 'LSL-202',
-          data: [],
-          borderColor: '#123a8c',
-          stepped: true,
-          pointRadius: 0
-        }
-      ]
-    },
-
-    options: {
-      maintainAspectRatio: false,
-      animation: false,
-
-      scales: {
-        y: {
-          min: 0,
-          max: 1.2,
-
-          ticks: {
-            stepSize: 1,
-
-            callback: valor =>
-              valor === 0 ? 'OFF' :
-              valor === 1 ? 'ON' : ''
-          }
-        }
-      }
-    }
-  });
-} else {
-  console.warn(
-    'Gráfica no disponible: comprueba Chart.js y el elemento #ch.'
+// Los campos de sensores y bomba deben llegar como números 0/1.
+// Esta función también admite booleanos y cadenas habituales.
+function esActivo(valor) {
+  return (
+    valor === 1 ||
+    valor === true ||
+    valor === '1' ||
+    valor === 'true' ||
+    valor === 'on'
   );
 }
 
-// ============================================================
-// INSTRUCCIONES OPCIONALES DE LA API
-// ============================================================
+// Clasifica el indicador de falla.
+// null significa que no llegó un valor reconocido.
+function estadoFallo(valor) {
+  if (
+    valor === 1 ||
+    valor === true ||
+    valor === '1' ||
+    valor === 'true'
+  ) {
+    return 1;
+  }
 
-const ep = $('ep');
+  if (
+    valor === 0 ||
+    valor === false ||
+    valor === '0' ||
+    valor === 'false'
+  ) {
+    return 0;
+  }
 
-if (ep) {
-  ep.textContent =
-`GET ${location.origin}/api/data?ls101=1&lsh201=0&lsl202=0&bomba=1&fallo=0&codigo=0&id=ESP32-01&fmt=txt
-
-Respuesta de ejemplo:
-BOMBA=1;MODO=auto
-
-Control:
-GET ${location.origin}/api/control?modo=manual&bomba=1
-
-Vaciar historial:
-GET ${location.origin}/api/reset`;
+  return null;
 }
 
-// ============================================================
-// FUNCIONES AUXILIARES
-// ============================================================
+// Calcula la antigüedad de la última lectura.
+function edadLectura(estado) {
+  if (!estado?.ts) return Infinity;
 
-function edadLectura(e) {
-  if (!e || !e.ts) return Infinity;
+  const fecha = new Date(estado.ts).getTime();
 
-  const tiempo = new Date(e.ts).getTime();
+  if (!Number.isFinite(fecha)) return Infinity;
 
-  if (!Number.isFinite(tiempo)) return Infinity;
-
-  return Math.max(0, (Date.now() - tiempo) / 1000);
+  return Math.max(0, (Date.now() - fecha) / 1000);
 }
 
+// Convierte una fecha del servidor a la hora local del navegador.
 function horaLocal(fecha) {
   if (!fecha) return 'sin datos';
 
-  const tiempo = new Date(fecha);
+  const objetoFecha = new Date(fecha);
 
-  if (!Number.isFinite(tiempo.getTime())) {
+  if (!Number.isFinite(objetoFecha.getTime())) {
     return 'fecha inválida';
   }
 
-  return tiempo.toLocaleTimeString('es-VE');
+  return objetoFecha.toLocaleTimeString('es-VE');
 }
 
+// Etiqueta del nivel ilustrativo.
 function nivelLabel(valor) {
   if (valor >= 98) return 'Lleno';
   if (valor >= 70) return 'Alto';
@@ -146,6 +128,115 @@ function nivelLabel(valor) {
 
   return 'Vacío';
 }
+
+
+// ============================================================
+// 3. INICIALIZACIÓN DE LA GRÁFICA
+// ============================================================
+
+// Si falla la gráfica, no se interrumpe el resto del panel.
+function iniciarGrafica() {
+  if (typeof Chart === 'undefined' || !$('ch')) {
+    console.warn(
+      'Gráfica no disponible. Revisar Chart.js y el elemento #ch.'
+    );
+
+    return;
+  }
+
+  try {
+    chart = new Chart($('ch'), {
+      type: 'line',
+
+      data: {
+        labels: [],
+
+        datasets: [
+          {
+            label: 'Bomba',
+            data: [],
+            borderColor: '#c8303a',
+            stepped: true,
+            pointRadius: 0
+          },
+          {
+            label: 'LS-101',
+            data: [],
+            borderColor: '#1a9b55',
+            stepped: true,
+            pointRadius: 0
+          },
+          {
+            label: 'LSH-201',
+            data: [],
+            borderColor: '#e08b00',
+            stepped: true,
+            pointRadius: 0
+          },
+          {
+            label: 'LSL-202',
+            data: [],
+            borderColor: '#123a8c',
+            stepped: true,
+            pointRadius: 0
+          }
+        ]
+      },
+
+      options: {
+        maintainAspectRatio: false,
+        animation: false,
+
+        scales: {
+          y: {
+            min: 0,
+            max: 1.2,
+
+            ticks: {
+              stepSize: 1,
+
+              // Correspondencia correcta de estados digitales.
+              callback: valor =>
+                valor === 0 ? 'OFF' :
+                valor === 1 ? 'ON' : ''
+            }
+          }
+        }
+      }
+    });
+  } catch (error) {
+    chart = null;
+    console.error('No se pudo iniciar la gráfica:', error);
+  }
+}
+
+
+// ============================================================
+// 4. INFORMACIÓN OPCIONAL DE LA API
+// ============================================================
+
+// Este elemento es opcional: el HTML puede no incluirlo.
+const ep = $('ep');
+
+if (ep) {
+  ep.textContent =
+`SUBIDA DE ESTADO DESDE EL ESP32:
+GET ${location.origin}/api/data?ls101=1&lsh201=0&lsl202=1&bomba=1&fallo=0&codigo=0&id=ESP32-01&fmt=txt
+
+SOLICITUD DE CONTROL MANUAL:
+GET ${location.origin}/api/control?modo=manual&bomba=1
+
+CONSULTA DE ESTADO E HISTORIAL:
+GET ${location.origin}/api/data
+
+VACIAR HISTORIAL:
+GET ${location.origin}/api/reset`;
+}
+
+
+// ============================================================
+// 5. INDICADOR DE COMUNICACIÓN
+// ============================================================
 
 function conn(texto, clase) {
   if ($('connTxt')) {
@@ -159,52 +250,48 @@ function conn(texto, clase) {
 
 function actualizarConexion() {
   if (!apiOK) {
-    conn('No se pudieron actualizar los datos', 'bad');
+    conn('Sin actualización de datos', 'bad');
+    return;
+  }
+
+  if (!S?.estado?.ts) {
+    conn('Esperando lecturas del ESP32', '');
     return;
   }
 
   const reciente =
-    S &&
     edadLectura(S.estado) < MAX_EDAD_SEGUNDOS;
 
   conn(
     reciente
-      ? 'ESP32 en línea'
-      : 'Sin datos recientes del ESP32',
+      ? 'Lectura reciente recibida'
+      : 'Mostrando última lectura recibida',
     reciente ? 'ok' : ''
   );
 }
 
+
 // ============================================================
-// BOTONES DE CONTROL
-// Esta limitación se ejecuta aunque falte el panel #alarmas.
+// 6. BOTONES
+// ============================================================
+//
+// Los sensores, las fallas y la antigüedad de la lectura
+// NO bloquean los botones.
+//
+// Se conserva únicamente la selección de modo:
+// las órdenes de encendido/apagado se solicitan en manual.
 // ============================================================
 
 function actualizarBotones() {
-  const e = S?.estado;
   const manual = S?.control?.modo === 'manual';
-
-  const datosVigentes =
-    apiOK &&
-    e &&
-    edadLectura(e) < MAX_EDAD_SEGUNDOS;
-
-  const permitidoEncender =
-    datosVigentes &&
-    e.ls101 === 1 &&
-    e.lsh201 === 0 &&
-    e.fallo === 0;
 
   if ($('on')) {
     $('on').disabled =
       enviandoControl ||
-      !manual ||
-      !permitidoEncender;
+      !manual;
   }
 
   if ($('off')) {
-    // Se permite solicitar apagado en manual aunque
-    // la última lectura esté desactualizada.
     $('off').disabled =
       enviandoControl ||
       !manual;
@@ -215,17 +302,59 @@ function actualizarBotones() {
   });
 }
 
+
 // ============================================================
-// REPRESENTACIÓN DEL AGUA
-// La altura es ilustrativa, no un porcentaje medido.
+// 7. REPRESENTACIÓN DE BOMBA Y FLUJO
+// ============================================================
+//
+// Se utiliza SOLO el último estado de "bomba".
+// No se detiene la animación por:
+// - tanque lleno;
+// - falta de agua;
+// - indicador de falla;
+// - lectura antigua;
+// - error posterior de comunicación.
+//
+// Esas condiciones se muestran como advertencias separadas.
+// ============================================================
+
+function renderActuadores(estado) {
+  const encendida = esActivo(estado.bomba);
+
+  if ($('flow')) {
+    $('flow').classList.toggle('on', encendida);
+  }
+
+  if ($('rotor')) {
+    $('rotor').classList.toggle('on', encendida);
+  }
+
+  if ($('kB')) {
+    $('kB').textContent =
+      encendida ? 'ENCENDIDA' : 'APAGADA';
+
+    $('kB').style.color =
+      encendida ? '#1a9b55' : '#c8303a';
+  }
+}
+
+
+// ============================================================
+// 8. REPRESENTACIÓN DEL AGUA
 // ============================================================
 
 function renderWater() {
-  const aguaAerea = $('wa');
+  if (!S?.estado?.ts) {
+    if ($('pctA')) $('pctA').textContent = 'Sin datos';
+    if ($('kN')) $('kN').textContent = '—';
 
-  if (aguaAerea) {
-    aguaAerea.setAttribute('height', 1.5 * est);
-    aguaAerea.setAttribute('y', 180 - 1.5 * est);
+    return;
+  }
+
+  // Altura ilustrativa del tanque aéreo.
+  if ($('wa')) {
+    $('wa').setAttribute('height', 1.5 * est);
+    $('wa').setAttribute('y', 180 - 1.5 * est);
   }
 
   if ($('pctA')) {
@@ -236,56 +365,54 @@ function renderWater() {
     $('kN').textContent = nivelLabel(est);
   }
 
-  const nivelSubterraneo = S?.estado?.ls101 ? 70 : 6;
-  const aguaSubterranea = $('ws');
+  // El tanque subterráneo representa presencia o ausencia
+  // de agua en LS-101, no un porcentaje medido.
+  const aguaDisponible = esActivo(S.estado.ls101);
+  const nivelSubterraneo = aguaDisponible ? 70 : 6;
 
-  if (aguaSubterranea) {
-    aguaSubterranea.setAttribute(
+  if ($('ws')) {
+    $('ws').setAttribute(
       'height',
       1.2 * nivelSubterraneo
     );
 
-    aguaSubterranea.setAttribute(
+    $('ws').setAttribute(
       'y',
       370 - 1.2 * nivelSubterraneo
     );
   }
 }
 
+
 // ============================================================
-// ESTADO DE SENSORES, BOMBA Y MODO
+// 9. REPRESENTACIÓN DE SENSORES Y MODO
 // ============================================================
 
-function render(e, control) {
+function render(estado, control) {
   const sensores = [
-    ['sLS', 'tLS', e.ls101],
-    ['sLSH', 'tLSH', e.lsh201],
-    ['sLSL', 'tLSL', e.lsl202]
+    ['sLS', 'tLS', estado.ls101],
+    ['sLSH', 'tLSH', estado.lsh201],
+    ['sLSL', 'tLSL', estado.lsl202]
   ];
 
   sensores.forEach(([idLed, idTexto, valor]) => {
-    const activo = valor === 1;
+    const activo = esActivo(valor);
     const led = $(idLed);
-    const texto = $(idTexto);
+    const contenedor = $(idTexto);
 
     if (led) {
       led.classList.toggle('on', activo);
     }
 
-    if (texto) {
-      texto.innerHTML =
-        `<span class="pill ${activo ? 'on' : ''}">` +
-        `${activo ? 'ACTIVO' : 'INACTIVO'}</span>`;
+    if (contenedor) {
+      const indicador = document.createElement('span');
+
+      indicador.className = `pill ${activo ? 'on' : ''}`;
+      indicador.textContent = activo ? 'ACTIVO' : 'INACTIVO';
+
+      contenedor.replaceChildren(indicador);
     }
   });
-
-  if ($('kB')) {
-    $('kB').textContent =
-      e.bomba === 1 ? 'ENCENDIDA' : 'APAGADA';
-
-    $('kB').style.color =
-      e.bomba === 1 ? '#1a9b55' : '#c8303a';
-  }
 
   if ($('kM')) {
     $('kM').textContent =
@@ -293,7 +420,7 @@ function render(e, control) {
   }
 
   if ($('kT')) {
-    $('kT').textContent = horaLocal(e.ts);
+    $('kT').textContent = horaLocal(estado.ts);
   }
 
   document.querySelectorAll('.seg button').forEach(boton => {
@@ -303,29 +430,30 @@ function render(e, control) {
     );
   });
 
-  // No mantener movimiento animado si los datos son antiguos.
-  const animarBomba =
-    apiOK &&
-    edadLectura(e) < MAX_EDAD_SEGUNDOS &&
-    e.bomba === 1;
-
-  if ($('flow')) {
-    $('flow').classList.toggle('on', animarBomba);
-  }
-
-  if ($('rotor')) {
-    $('rotor').classList.toggle('on', animarBomba);
-  }
-
-  actualizarBotones();
+  renderActuadores(estado);
   renderWater();
+  actualizarBotones();
 }
 
+
 // ============================================================
-// ADVERTENCIAS Y FALLAS
+// 10. ADVERTENCIAS DIDÁCTICAS
+// ============================================================
+//
+// Esta función SOLO genera mensajes.
+//
+// No modifica:
+// - estado.bomba;
+// - control.bomba;
+// - órdenes manuales;
+// - estado de los sensores;
+// - animación de bomba.
+//
+// La web puede detectar una combinación problemática incluso
+// si el programa del estudiante envía fallo=0.
 // ============================================================
 
-function renderAvisos(e) {
+function renderAvisos(estado) {
   const contenedor = $('alarmas');
 
   if (!contenedor) return;
@@ -336,91 +464,141 @@ function renderAvisos(e) {
     avisos.push({ tipo, texto });
   };
 
-  const edad = edadLectura(e);
+  const ls = esActivo(estado.ls101);
+  const lsh = esActivo(estado.lsh201);
+  const lsl = esActivo(estado.lsl202);
+  const bomba = esActivo(estado.bomba);
+  const fallo = estadoFallo(estado.fallo);
 
+  // Comunicación y antigüedad: no alteran la representación.
   if (!apiOK) {
     agregar(
-      'danger',
-      'No se pudieron actualizar los datos. ' +
-      'La información mostrada no confirma el estado actual del equipo.'
+      'warn',
+      'No se pudo actualizar la información. ' +
+      'Se conserva la última salida reportada, incluida su animación. ' +
+      'Esto no confirma el estado actual del equipo.'
     );
-  } else if (edad >= MAX_EDAD_SEGUNDOS) {
+  } else if (
+    estado.ts &&
+    edadLectura(estado) >= MAX_EDAD_SEGUNDOS
+  ) {
     agregar(
       'warn',
       'Sin datos recientes del ESP32. ' +
-      'Los estados siguientes corresponden a la última lectura recibida.'
+      'La pantalla y la animación representan la última lectura ' +
+      'recibida, no una confirmación del estado actual.'
     );
   }
 
-  if (!e.ts) {
+  if (!estado.ts) {
     agregar(
       'info',
-      'Todavía no se ha recibido una lectura del ESP32.'
+      'Esperando la primera lectura del ESP32.'
     );
   } else {
-    // Incoherencia según la convención: 1 = agua presente.
-    if (e.lsh201 === 1 && e.lsl202 === 0) {
+    // Alto activo e inferior inactivo:
+    // incoherencia según la convención "1 = agua presente".
+    if (lsh && !lsl) {
       agregar(
         'danger',
-        'MANTENIMIENTO: LSH-201 activo y LSL-202 inactivo. ' +
-        'Revisar sensores, cableado y polaridad. ' +
-        'La bomba debe permanecer bloqueada.'
+        'ADVERTENCIA DE MANTENIMIENTO: LSH-201 está activo ' +
+        'y LSL-202 está inactivo. Revisar sensores, cableado, ' +
+        'polaridad y programación del ESP32.'
       );
     }
 
-    if (e.lsh201 === 1) {
+    // Tanque lleno con bomba todavía encendida.
+    if (lsh && bomba) {
       agregar(
-        e.bomba === 1 ? 'danger' : 'info',
-
-        e.bomba === 1
-          ? 'ALARMA: se reporta tanque lleno y salida de bomba ' +
-            'encendida. Revisar inmediatamente el control y la salida.'
-          : 'Tanque aéreo lleno. Se reporta la salida de bomba apagada.'
+        'danger',
+        'POSIBLE SOBRELLENADO: el ESP32 reporta nivel alto ' +
+        'y mantiene la salida de bomba encendida. ' +
+        'El estudiante debe revisar la condición de parada ' +
+        'de su programa.'
       );
-    }
-
-    if (e.ls101 === 0) {
+    } else if (lsh) {
       agregar(
-        e.bomba === 1 ? 'danger' : 'warn',
-
-        e.bomba === 1
-          ? 'ALARMA: se reporta la salida de bomba encendida ' +
-            'sin agua disponible en el tanque subterráneo.'
-          : 'Sin agua disponible en el tanque subterráneo. ' +
-            'La bomba debe permanecer bloqueada.'
+        'info',
+        'Nivel alto reportado. La salida de bomba se reporta apagada.'
       );
     }
 
-    if (e.fallo === 1) {
+    // Falta de agua disponible con bomba encendida.
+    if (!ls && bomba) {
+      agregar(
+        'danger',
+        'POSIBLE MARCHA EN SECO: la salida de bomba está encendida ' +
+        'sin agua disponible en LS-101. Revisar la programación ' +
+        'del ESP32.'
+      );
+    } else if (!ls) {
+      agregar(
+        'info',
+        'LS-101 no reporta agua disponible. ' +
+        'La salida de bomba se reporta apagada.'
+      );
+    }
+
+    // Indicador de falla calculado por el estudiante.
+    if (fallo === 1) {
       const descripciones = {
-        0: 'Indicador de falla activo sin una causa específica.',
+        0: 'Sin una causa específica en el código enviado.',
         1: 'Lecturas incoherentes entre LSH-201 y LSL-202.',
-        2: 'Sin agua disponible en LS-101.',
+        2: 'Ausencia de agua disponible en LS-101.',
         3: 'Lecturas incoherentes y ausencia de agua en LS-101.'
       };
 
       const descripcion =
-        descripciones[e.codigo] ||
-        'Código no informado o no reconocido.';
+        descripciones[estado.codigo] ||
+        'Código no informado o no reconocido por esta interfaz.';
 
       agregar(
-        'danger',
-        `Falla reportada por el ESP32. ` +
-        `Código: ${e.codigo ?? 'no informado'}. ${descripcion}`
+        'warn',
+        `El ESP32 reporta fallo=1. ` +
+        `Código: ${estado.codigo ?? 'no informado'}. ${descripcion}`
       );
-    } else if (e.fallo !== 0) {
+
+      if (bomba) {
+        agregar(
+          'warn',
+          'El ESP32 reporta una falla y mantiene la salida ' +
+          'de bomba encendida. Revisar si ese comportamiento ' +
+          'corresponde a la estrategia programada en la práctica.'
+        );
+      }
+    } else if (fallo === null) {
       agregar(
         'warn',
-        'La lectura no incluye un indicador de falla válido. ' +
-        'Comprueba la API y el firmware del ESP32. ' +
-        'El encendido manual permanece deshabilitado.'
+        'La lectura no incluye un indicador de falla reconocido. ' +
+        'Revisar el envío de fallo y codigo desde el ESP32. ' +
+        'La representación y las órdenes manuales no se bloquean.'
+      );
+    }
+
+    // Comparación entre diagnóstico del alumno y observación web.
+    if (fallo === 0 && lsh && !lsl) {
+      agregar(
+        'warn',
+        'REVISIÓN DEL DIAGNÓSTICO: el ESP32 envía fallo=0, ' +
+        'pero las lecturas de nivel son incoherentes. ' +
+        'Revisar cómo se calcula el indicador de falla.'
+      );
+    }
+
+    if (fallo === 0 && estado.codigo != null &&
+        Number(estado.codigo) !== 0) {
+      agregar(
+        'warn',
+        'REVISIÓN DEL REPORTE: se recibió fallo=0 junto con ' +
+        'un código de falla distinto de cero.'
       );
     }
 
     if (!avisos.length) {
       agregar(
         'ok',
-        'Sin advertencias en la última lectura recibida.'
+        'No se detectan advertencias en la última lectura recibida. ' +
+        'La web representa la salida reportada por el ESP32.'
       );
     }
   }
@@ -437,9 +615,10 @@ function renderAvisos(e) {
   });
 }
 
+
 // ============================================================
-// TABLA DEL HISTORIAL
-// Los valores recibidos se insertan como texto.
+// 11. TABLA DEL HISTORIAL
+// Mantiene las siete columnas del index.html actual.
 // ============================================================
 
 function agregarCelda(fila, texto, clase = '') {
@@ -447,7 +626,9 @@ function agregarCelda(fila, texto, clase = '') {
 
   celda.textContent = texto;
 
-  if (clase) celda.className = clase;
+  if (clase) {
+    celda.className = clase;
+  }
 
   fila.appendChild(celda);
 
@@ -457,7 +638,7 @@ function agregarCelda(fila, texto, clase = '') {
 function agregarEstado(fila, valor) {
   const celda = document.createElement('td');
   const indicador = document.createElement('span');
-  const activo = valor === 1;
+  const activo = esActivo(valor);
 
   indicador.className = `pill ${activo ? 'on' : ''}`;
   indicador.textContent = activo ? 'ACTIVO' : 'INACTIVO';
@@ -483,10 +664,15 @@ function renderTabla(historial) {
   [...historial].reverse().forEach(registro => {
     const fila = document.createElement('tr');
 
+    // Compatibilidad con historial antiguo, que no guarda
+    // el identificador de dispositivo en cada registro.
     const dispositivo =
-      registro.t === S.estado.ts
-        ? (S.estado.dispositivo || 'ESP32')
-        : '—';
+      registro.dispositivo ||
+      (
+        registro.t === S.estado.ts
+          ? S.estado.dispositivo || 'ESP32'
+          : '—'
+      );
 
     agregarCelda(fila, horaLocal(registro.t), 'num');
     agregarCelda(fila, dispositivo);
@@ -504,45 +690,58 @@ function renderTabla(historial) {
   tabla.appendChild(fragmento);
 }
 
+
 // ============================================================
-// ACTUALIZACIÓN GENERAL
+// 12. ACTUALIZACIÓN DE LA GRÁFICA
+// ============================================================
+
+function renderGrafica(historial) {
+  if (!chart) return;
+
+  try {
+    chart.data.labels = historial.map(registro =>
+      horaLocal(registro.t)
+    );
+
+    chart.data.datasets[0].data = historial.map(registro =>
+      esActivo(registro.b) ? 1 : 0
+    );
+
+    chart.data.datasets[1].data = historial.map(registro =>
+      esActivo(registro.ls) ? 1 : 0
+    );
+
+    chart.data.datasets[2].data = historial.map(registro =>
+      esActivo(registro.lsh) ? 1 : 0
+    );
+
+    chart.data.datasets[3].data = historial.map(registro =>
+      esActivo(registro.lsl) ? 1 : 0
+    );
+
+    chart.update();
+  } catch (error) {
+    console.error('Error al actualizar la gráfica:', error);
+  }
+}
+
+
+// ============================================================
+// 13. ACTUALIZACIÓN GENERAL DEL PANEL
 // ============================================================
 
 function renderData() {
   if (!S) return;
 
-  const historial = Array.isArray(S.historial)
-    ? S.historial
-    : [];
-
   render(S.estado, S.control);
   renderAvisos(S.estado);
-
-  if (chart) {
-    chart.data.labels = historial.map(registro =>
-      horaLocal(registro.t)
-    );
-
-    chart.data.datasets[0].data =
-      historial.map(registro => registro.b);
-
-    chart.data.datasets[1].data =
-      historial.map(registro => registro.ls);
-
-    chart.data.datasets[2].data =
-      historial.map(registro => registro.lsh);
-
-    chart.data.datasets[3].data =
-      historial.map(registro => registro.lsl);
-
-    chart.update();
-  }
-
-  renderTabla(historial);
+  renderTabla(S.historial);
+  renderGrafica(S.historial);
 }
 
+
 // ============================================================
-// CONSULTA DE DATOS
+// 14. CONSULTA PERIÓDICA DE DATOS
 // ============================================================
 
 async function poll() {
@@ -567,65 +766,49 @@ async function poll() {
       !datos.control ||
       !Array.isArray(datos.historial)
     ) {
-      throw new Error('La API devolvió una estructura no válida.');
+      throw new Error(
+        'La respuesta de la API no tiene la estructura esperada.'
+      );
     }
 
     S = datos;
     apiOK = true;
-
-    actualizarConexion();
-    renderData();
   } catch (error) {
     apiOK = false;
 
     console.error('Error al consultar /api/data:', error);
-
-    actualizarConexion();
-    actualizarBotones();
-
-    if (S) {
-      render(S.estado, S.control);
-      renderAvisos(S.estado);
-    } else if ($('alarmas')) {
-      $('alarmas').textContent =
-        'No fue posible obtener los datos de la API. ' +
-        'Consulta la consola del navegador.';
-    }
   } finally {
     consultando = false;
   }
+
+  actualizarConexion();
+  actualizarBotones();
+
+  // Si una consulta falla, se conserva la respuesta anterior.
+  if (S) {
+    renderData();
+  } else if ($('alarmas')) {
+    $('alarmas').textContent =
+      'Todavía no fue posible obtener una respuesta válida de la API. ' +
+      'Consulta la consola del navegador.';
+  }
 }
 
+
 // ============================================================
-// ÓRDENES MANUALES
+// 15. ENVÍO DE ÓRDENES MANUALES
+// ============================================================
+//
+// No se comprueban sensores ni fallas para enviar la solicitud.
+// El programa del estudiante decide cómo procesarla.
+//
+// Una solicitud de control NO cambia directamente S.estado.bomba.
+// La representación cambia cuando la API devuelve una nueva
+// lectura reportada por el ESP32.
 // ============================================================
 
 async function ctl(parametros) {
   if (enviandoControl) return;
-
-  // Comprobación adicional antes de solicitar encendido.
-  if (Number(parametros.bomba) === 1) {
-    const e = S?.estado;
-
-    const permitido =
-      apiOK &&
-      S?.control?.modo === 'manual' &&
-      e &&
-      edadLectura(e) < MAX_EDAD_SEGUNDOS &&
-      e.ls101 === 1 &&
-      e.lsh201 === 0 &&
-      e.fallo === 0;
-
-    if (!permitido) {
-      alert(
-        'No se permite solicitar el encendido. ' +
-        'Comprueba el modo, los sensores, las fallas ' +
-        'y la fecha de la última lectura.'
-      );
-
-      return;
-    }
-  }
 
   enviandoControl = true;
   actualizarBotones();
@@ -647,7 +830,7 @@ async function ctl(parametros) {
 
     alert(
       'No se pudo confirmar el envío de la orden. ' +
-      'Verifica la conexión y el estado del equipo.'
+      'Verifica la conexión y consulta el estado del equipo.'
     );
   } finally {
     enviandoControl = false;
@@ -655,22 +838,30 @@ async function ctl(parametros) {
   }
 }
 
+// Selección del modo.
 document.querySelectorAll('.seg button').forEach(boton => {
   boton.onclick = () => {
     ctl({ modo: boton.dataset.m });
   };
 });
 
+// Solicitud de encendido manual.
 if ($('on')) {
-  $('on').onclick = () => ctl({ bomba: 1 });
+  $('on').onclick = () => {
+    ctl({ bomba: 1 });
+  };
 }
 
+// Solicitud de apagado manual.
 if ($('off')) {
-  $('off').onclick = () => ctl({ bomba: 0 });
+  $('off').onclick = () => {
+    ctl({ bomba: 0 });
+  };
 }
+
 
 // ============================================================
-// VACIAR HISTORIAL
+// 16. VACIAR HISTORIAL
 // ============================================================
 
 if ($('clear')) {
@@ -705,8 +896,16 @@ if ($('clear')) {
   };
 }
 
+
 // ============================================================
-// ANIMACIÓN Y VIGENCIA DE LOS DATOS
+// 17. ANIMACIÓN DIDÁCTICA
+// ============================================================
+//
+// Se conserva la última salida recibida aunque la muestra
+// sea antigua. La advertencia de antigüedad permanece visible.
+//
+// Los sensores orientan el dibujo ilustrativo del agua,
+// pero NO apagan la representación de la bomba.
 // ============================================================
 
 function tick() {
@@ -715,56 +914,54 @@ function tick() {
 
   if (!S) return;
 
-  const e = S.estado;
-  const edad = edadLectura(e);
+  const estado = S.estado;
 
-  // Actualizar los mensajes aunque una consulta de red esté pendiente.
-  renderAvisos(e);
+  renderAvisos(estado);
+  renderActuadores(estado);
 
-  const vigente =
-    apiOK &&
-    edad < MAX_EDAD_SEGUNDOS;
+  if (!estado.ts) return;
 
-  const animarBomba =
-    vigente &&
-    e.bomba === 1;
+  const ls = esActivo(estado.ls101);
+  const lsh = esActivo(estado.lsh201);
+  const lsl = esActivo(estado.lsl202);
+  const bomba = esActivo(estado.bomba);
 
-  if ($('flow')) {
-    $('flow').classList.toggle('on', animarBomba);
-  }
-
-  if ($('rotor')) {
-    $('rotor').classList.toggle('on', animarBomba);
-  }
-
-  if (!vigente || !e.ts) return;
-
-  if (e.lsh201 === 1) {
+  if (lsh) {
+    // El superior activo se representa como tanque lleno.
+    // Si la bomba está encendida, su animación continúa
+    // y la advertencia de sobrellenado se muestra aparte.
     est = 100;
-  } else if (e.lsl202 === 0) {
-    est = Math.min(est, 20);
+  } else {
+    // El inferior activo indica presencia de agua a esa altura.
+    if (lsl) {
+      est = Math.max(est, 20);
+    }
+
+    // Simulación visual de entrada de agua.
+    // No utiliza "fallo" ni la antigüedad para bloquearse.
+    if (bomba && ls) {
+      est = Math.min(100, est + 1.5);
+    }
   }
 
-  if (
-    e.bomba === 1 &&
-    e.ls101 === 1 &&
-    e.lsh201 === 0 &&
-    e.fallo === 0
-  ) {
-    est = Math.min(100, est + 1.5);
-  }
-
+  // No se inventa un vaciado: no hay una señal de descarga
+  // ni una medición continua que permita calcularlo.
   renderWater();
 }
 
+
 // ============================================================
-// INICIO
-// Estas instrucciones deben estar fuera de las funciones.
+// 18. INICIO DEL PANEL
 // ============================================================
 
+iniciarGrafica();
 actualizarBotones();
 
-setInterval(poll, 3000);
-setInterval(tick, 700);
+// Consultar estados e historial.
+setInterval(poll, INTERVALO_CONSULTA_MS);
 
+// Actualizar animación y mensajes.
+setInterval(tick, INTERVALO_ANIMACION_MS);
+
+// Primera consulta al abrir la página.
 poll();
