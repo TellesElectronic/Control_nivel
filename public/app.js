@@ -283,8 +283,11 @@ function actualizarConexion() {
 // ============================================================
 
 function actualizarBotones() {
-  const manual = S?.control?.modo === 'manual';
+  // Utilizar el modo que el ESP32 reporta estar ejecutando,
+  // no la selección pendiente guardada en control.modo.
+  const manual = S?.estado?.modo === 'manual';
 
+  // No bloquear por sensores, fallas ni antigüedad.
   if ($('on')) {
     $('on').disabled =
       enviandoControl ||
@@ -297,11 +300,11 @@ function actualizarBotones() {
       !manual;
   }
 
+  // Permitir solicitar un cambio de modo.
   document.querySelectorAll('.seg button').forEach(boton => {
     boton.disabled = enviandoControl;
   });
 }
-
 
 // ============================================================
 // 7. REPRESENTACIÓN DE BOMBA Y FLUJO
@@ -351,24 +354,46 @@ function renderWater() {
     return;
   }
 
-  // Altura ilustrativa del tanque aéreo.
+  const estado = S.estado;
+
+  const lsh = esActivo(estado.lsh201);
+  const lsl = esActivo(estado.lsl202);
+  const ls = esActivo(estado.ls101);
+
+  let etiquetaIndicador;
+  let etiquetaTanque;
+
+  // Las etiquetas dependen de sensores, no de la variable est.
+  if (lsh && !lsl) {
+    etiquetaIndicador = 'Revisar sensores';
+    etiquetaTanque = 'Revisar';
+  } else if (lsh) {
+    etiquetaIndicador = 'Lleno';
+    etiquetaTanque = 'Lleno';
+  } else if (lsl) {
+    etiquetaIndicador = 'Entre sensores';
+    etiquetaTanque = 'Medio';
+  } else {
+    etiquetaIndicador = 'Bajo';
+    etiquetaTanque = 'Bajo';
+  }
+
+  // est solo controla la transición visual del agua.
   if ($('wa')) {
     $('wa').setAttribute('height', 1.5 * est);
     $('wa').setAttribute('y', 180 - 1.5 * est);
   }
 
   if ($('pctA')) {
-    $('pctA').textContent = nivelLabel(est);
+    $('pctA').textContent = etiquetaTanque;
   }
 
   if ($('kN')) {
-    $('kN').textContent = nivelLabel(est);
+    $('kN').textContent = etiquetaIndicador;
   }
 
-  // El tanque subterráneo representa presencia o ausencia
-  // de agua en LS-101, no un porcentaje medido.
-  const aguaDisponible = esActivo(S.estado.ls101);
-  const nivelSubterraneo = aguaDisponible ? 70 : 6;
+  // Presencia de agua en el tanque subterráneo.
+  const nivelSubterraneo = ls ? 70 : 6;
 
   if ($('ws')) {
     $('ws').setAttribute(
@@ -414,22 +439,53 @@ function render(estado, control) {
     }
   });
 
-if ($('kM')) {
+  // Modo realmente reportado por el ESP32.
+  const modoReportado = estado.modo;
+
   const etiquetas = {
     auto: 'Automático',
     manual: 'Manual'
   };
 
-  $('kM').textContent =
-    etiquetas[estado.modo] || 'No informado';
-}
+  if ($('kM')) {
+    $('kM').textContent =
+      etiquetas[modoReportado] || 'No informado';
+  }
 
+  // Resaltar el modo reportado, no la solicitud de la web.
+  // Si el ESP32 no informa modo, ninguno queda seleccionado.
   document.querySelectorAll('.seg button').forEach(boton => {
     boton.classList.toggle(
       'act',
-      boton.dataset.m === control.modo
+      boton.dataset.m === modoReportado
     );
   });
+
+  if ($('kT')) {
+    $('kT').textContent = horaLocal(estado.ts);
+  }
+
+  // Mostrar separadamente la solicitud pendiente de la web.
+  const informacionModo = $('modoInfo');
+
+  if (informacionModo) {
+    const solicitado =
+      etiquetas[control.modo] || 'No informado';
+
+    const reportado =
+      etiquetas[modoReportado] || 'No informado';
+
+    informacionModo.textContent =
+      `Reportado por ESP32: ${reportado}. ` +
+      `Solicitado desde la web: ${solicitado}.` +
+      (
+        modoReportado &&
+        control.modo &&
+        modoReportado !== control.modo
+          ? ' Los modos difieren: comprobar cómo el programa procesa la solicitud.'
+          : ''
+      );
+  }
 
   renderActuadores(estado);
   renderWater();
