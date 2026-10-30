@@ -5,23 +5,38 @@ import { load, save, persistente } from './_store.js';
 // ============================================================
 //
 // FUNCIONES:
-// 1. Recibir estados enviados por el ESP32.
-// 2. Guardar la última lectura y su historial.
-// 3. Permitir que la web consulte esa información.
-// 4. Retransmitir la orden manual configurada.
+// 1. Recibir los estados enviados por el ESP32.
+// 2. Recibir el modo que el ESP32 reporta estar ejecutando.
+// 3. Guardar la última lectura y las últimas 200 muestras.
+// 4. Entregar los datos a la interfaz web.
+// 5. Retransmitir las solicitudes de control de la web.
 //
-// ESTA API NO DEBE:
-// - Apagar la bomba por nivel alto.
-// - Bloquear la bomba por falta de agua.
-// - Cambiar la salida por el indicador de falla.
-// - Corregir automáticamente la programación del estudiante.
+// ESTA API NO CORRIGE LA PROGRAMACIÓN DEL ESTUDIANTE:
+// - No apaga la bomba por nivel alto.
+// - No bloquea la bomba por falta de agua.
+// - No cambia la salida por el indicador de falla.
+// - No sustituye el diagnóstico enviado por el ESP32.
 //
-// Las advertencias se muestran en la web.
-// El programa del ESP32 es el responsable de su salida.
+// DIFERENCIA ENTRE MODOS:
+//
+// estado.modo:
+//   Modo reportado por el ESP32: "auto", "manual" o null.
+//
+// control.modo:
+//   Modo solicitado desde la web.
+//
+// Recibir modo=manual NO modifica automáticamente control.modo.
+// Ambos valores se mantienen separados para fines didácticos.
 // ============================================================
 
 
-// Convierte los valores digitales recibidos a números 0 o 1.
+// ============================================================
+// 1. CONVERSIÓN DE VALORES DIGITALES
+// ============================================================
+
+// Conserva la convención utilizada por la versión anterior:
+// los valores reconocidos como activos se convierten a 1;
+// los demás se convierten a 0.
 const b = valor =>
   (
     valor === '1' ||
@@ -33,7 +48,7 @@ const b = valor =>
 
 
 // ============================================================
-// MANEJADOR PRINCIPAL
+// 2. MANEJADOR PRINCIPAL
 // ============================================================
 
 export default async function handler(req, res) {
@@ -45,13 +60,14 @@ export default async function handler(req, res) {
     const s = await load();
 
     // --------------------------------------------------------
-    // 1. IDENTIFICAR UNA SUBIDA DE DATOS
+    // 3. IDENTIFICAR UNA SUBIDA DE DATOS
     // --------------------------------------------------------
     //
-    // Se considera subida si llega alguno de estos campos.
-    // También se admite actualizar solo bomba, fallo o codigo.
+    // Ahora también se admite "modo" como dato de subida.
     //
-    // Una consulta sin estos parámetros únicamente lee datos.
+    // Sin ninguno de estos campos, la petición solo consulta.
+    // Los parámetros id, key y fmt no generan una lectura
+    // por sí solos.
     // --------------------------------------------------------
 
     const esSubida = [
@@ -62,11 +78,12 @@ export default async function handler(req, res) {
       'b',
       'fallo',
       'codigo',
-      'nivel'
+      'nivel',
+      'modo'
     ].some(campo => q[campo] !== undefined);
 
     // --------------------------------------------------------
-    // 2. CONSULTA DE ESTADO E HISTORIAL
+    // 4. CONSULTA DE ESTADO E HISTORIAL
     // --------------------------------------------------------
 
     if (!esSubida) {
@@ -77,10 +94,10 @@ export default async function handler(req, res) {
     }
 
     // --------------------------------------------------------
-    // 3. VALIDACIÓN DE CLAVE PARA SUBIDAS
+    // 5. VALIDAR LA CLAVE DE SUBIDA
     // --------------------------------------------------------
     //
-    // Si API_KEY no está configurada, no se exige una clave.
+    // Solo se exige si existe API_KEY en el entorno de Vercel.
     // --------------------------------------------------------
 
     if (
@@ -88,25 +105,67 @@ export default async function handler(req, res) {
       q.key !== process.env.API_KEY
     ) {
       return res.status(401).json({
+        ok: false,
         error: 'key inválida'
       });
     }
 
-    // Último estado disponible.
     const p = s.estado;
 
     // --------------------------------------------------------
-    // 4. VALIDAR EL CÓDIGO DE FALLA
+    // 6. VALIDAR EL MODO REPORTADO POR EL ESP32
+    // --------------------------------------------------------
+    //
+    // Valores aceptados:
+    //   modo=auto
+    //   modo=manual
+    //
+    // Si no llega el campo, se guarda null.
+    // No se utiliza control.modo como sustituto, porque eso
+    // confundiría una solicitud con un estado reportado.
+    // --------------------------------------------------------
+
+    let modoReportado = null;
+
+    if (q.modo !== undefined) {
+      if (Array.isArray(q.modo)) {
+        return res.status(400).json({
+          ok: false,
+          error: 'modo debe enviarse una sola vez'
+        });
+      }
+
+      modoReportado = String(q.modo).trim().toLowerCase();
+
+      if (
+        modoReportado !== 'auto' &&
+        modoReportado !== 'manual'
+      ) {
+        return res.status(400).json({
+          ok: false,
+          error: 'modo debe ser auto o manual'
+        });
+      }
+    }
+
+    // --------------------------------------------------------
+    // 7. VALIDAR EL CÓDIGO DE FALLA
     // --------------------------------------------------------
     //
     // Se aceptan enteros no negativos.
-    // No se limita a 3, para permitir nuevos códigos didácticos.
-    // Si no se envía, queda en null.
+    // No se limita a 3, para permitir ampliar las prácticas.
     // --------------------------------------------------------
 
     let codigo = null;
 
     if (q.codigo !== undefined) {
+      if (Array.isArray(q.codigo)) {
+        return res.status(400).json({
+          ok: false,
+          error: 'codigo debe enviarse una sola vez'
+        });
+      }
+
       const textoCodigo = String(q.codigo).trim();
       const numeroCodigo = Number(textoCodigo);
 
@@ -116,6 +175,7 @@ export default async function handler(req, res) {
         numeroCodigo < 0
       ) {
         return res.status(400).json({
+          ok: false,
           error: 'codigo debe ser un entero no negativo'
         });
       }
@@ -124,12 +184,23 @@ export default async function handler(req, res) {
     }
 
     // --------------------------------------------------------
-    // 5. VALIDAR EL NIVEL OPCIONAL
+    // 8. VALIDAR EL NIVEL OPCIONAL
+    // --------------------------------------------------------
+    //
+    // Si se envía, debe estar entre 0 y 100.
+    // No se calcula a partir del tiempo de bomba encendida.
     // --------------------------------------------------------
 
     let nivel;
 
     if (q.nivel !== undefined) {
+      if (Array.isArray(q.nivel)) {
+        return res.status(400).json({
+          ok: false,
+          error: 'nivel debe enviarse una sola vez'
+        });
+      }
+
       const textoNivel = String(q.nivel).trim();
       const numeroNivel = Number(textoNivel);
 
@@ -140,6 +211,7 @@ export default async function handler(req, res) {
         numeroNivel > 100
       ) {
         return res.status(400).json({
+          ok: false,
           error: 'nivel debe ser un número entre 0 y 100'
         });
       }
@@ -148,16 +220,20 @@ export default async function handler(req, res) {
     }
 
     // --------------------------------------------------------
-    // 6. CONSTRUIR EL ESTADO REPORTADO
+    // 9. CONSTRUIR EL ESTADO REPORTADO
     // --------------------------------------------------------
     //
-    // Los sensores o la bomba no enviados conservan su valor.
+    // Sensores y bomba:
+    // conservan su último valor si no se envían.
     //
-    // fallo y codigo quedan en null si no se envían:
-    // así no se presenta como actual un diagnóstico anterior.
+    // fallo, codigo y modo:
+    // quedan en null si no se incluyen en esta petición.
     //
-    // Para una muestra completa y coherente, el ESP32 debe
-    // enviar todos los campos en cada petición.
+    // nivel:
+    // solo se incluye si se envía en esta petición.
+    //
+    // RECOMENDACIÓN PARA LA PRÁCTICA:
+    // enviar una muestra completa en cada GET.
     // --------------------------------------------------------
 
     const e = {
@@ -176,7 +252,7 @@ export default async function handler(req, res) {
           ? b(q.lsl202)
           : p.lsl202,
 
-      // "b" se conserva como alias de "bomba".
+      // "b" se mantiene como alias de "bomba".
       bomba:
         q.bomba !== undefined
           ? b(q.bomba)
@@ -186,7 +262,7 @@ export default async function handler(req, res) {
                 : p.bomba
             ),
 
-      // Diagnóstico calculado y enviado por el ESP32.
+      // Indicador enviado por el programa del estudiante.
       fallo:
         q.fallo !== undefined
           ? b(q.fallo)
@@ -194,7 +270,10 @@ export default async function handler(req, res) {
 
       codigo,
 
-      // Fecha de recepción en el servidor.
+      // Modo reportado, independiente del solicitado por la web.
+      modo: modoReportado,
+
+      // Fecha de recepción de esta petición.
       ts: new Date().toISOString(),
 
       dispositivo: String(q.id || 'ESP32')
@@ -205,7 +284,37 @@ export default async function handler(req, res) {
     }
 
     // --------------------------------------------------------
-    // 7. GUARDAR LA LECTURA EN EL HISTORIAL
+    // 10. CONSTRUIR EL REGISTRO HISTÓRICO
+    // --------------------------------------------------------
+    //
+    // "m" ahora guarda el modo reportado por el ESP32.
+    //
+    // "modo_solicitado" conserva por separado la selección
+    // de la web para poder comparar ambos valores.
+    // --------------------------------------------------------
+
+    const registro = {
+      t: e.ts,
+      dispositivo: e.dispositivo,
+
+      b: e.bomba,
+      ls: e.ls101,
+      lsh: e.lsh201,
+      lsl: e.lsl202,
+
+      f: e.fallo,
+      cod: e.codigo,
+
+      m: e.modo,
+      modo_solicitado: s.control.modo
+    };
+
+    if (nivel !== undefined) {
+      registro.nivel = nivel;
+    }
+
+    // --------------------------------------------------------
+    // 11. GUARDAR ESTADO E HISTORIAL
     // --------------------------------------------------------
 
     s.estado = e;
@@ -214,19 +323,9 @@ export default async function handler(req, res) {
       s.historial = [];
     }
 
-    s.historial.push({
-      t: e.ts,
-      dispositivo: e.dispositivo,
-      b: e.bomba,
-      ls: e.ls101,
-      lsh: e.lsh201,
-      lsl: e.lsl202,
-      f: e.fallo,
-      cod: e.codigo,
-      m: s.control.modo
-    });
+    s.historial.push(registro);
 
-    // Conservar solamente las últimas 200 lecturas.
+    // Mantener las últimas 200 muestras.
     if (s.historial.length > 200) {
       s.historial = s.historial.slice(-200);
     }
@@ -234,26 +333,38 @@ export default async function handler(req, res) {
     await save(s);
 
     // --------------------------------------------------------
-    // 8. SELECCIONAR LA RESPUESTA PARA EL ESP32
+    // 12. SELECCIONAR LA RESPUESTA PARA EL ESP32
     // --------------------------------------------------------
     //
-    // MANUAL:
-    // Retransmitir la solicitud guardada en s.control.bomba.
+    // Se mantiene la compatibilidad con el sketch existente.
     //
-    // AUTOMÁTICO:
-    // Devolver la salida que el propio ESP32 reportó.
-    // En este modo no es una nueva decisión de control.
+    // Si la web solicita manual:
+    //   devolver la orden guardada en control.bomba.
     //
-    // No evaluar sensores ni fallas para alterar esta respuesta.
+    // Si la web solicita automático:
+    //   devolver la salida reportada por el ESP32.
+    //
+    // NO se usan sensores, fallas ni modoReportado para
+    // corregir o bloquear esa respuesta.
     // --------------------------------------------------------
 
+    const modoSolicitado = s.control.modo;
+
     const orden =
-      s.control.modo === 'manual'
+      modoSolicitado === 'manual'
         ? s.control.bomba
         : e.bomba;
 
     // --------------------------------------------------------
-    // 9. RESPUESTA EN TEXTO PARA EL SKETCH EXISTENTE
+    // 13. RESPUESTA EN TEXTO
+    // --------------------------------------------------------
+    //
+    // IMPORTANTE:
+    // MODO representa el modo SOLICITADO DESDE LA WEB.
+    // No es una confirmación del modo reportado por el ESP32.
+    //
+    // Se conserva exactamente el formato que usa el sketch:
+    // BOMBA=1;MODO=manual
     // --------------------------------------------------------
 
     if (q.fmt === 'txt') {
@@ -263,29 +374,30 @@ export default async function handler(req, res) {
       );
 
       return res.send(
-        `BOMBA=${orden};MODO=${s.control.modo}`
+        `BOMBA=${orden};MODO=${modoSolicitado}`
       );
     }
 
     // --------------------------------------------------------
-    // 10. RESPUESTA JSON
+    // 14. RESPUESTA JSON
     // --------------------------------------------------------
     //
-    // bomba:
-    // Valor devuelto al ESP32 según el modo.
-    //
-    // bomba_reportada:
-    // Salida que llegó en esta lectura.
-    //
-    // Ambos pueden ser distintos en modo manual mientras
-    // el dispositivo todavía no aplica o reporta la solicitud.
+    // Se conservan "bomba" y "modo" por compatibilidad.
+    // Se agregan nombres explícitos para distinguir:
+    // - lo solicitado desde la web;
+    // - lo reportado por el ESP32.
     // --------------------------------------------------------
 
     return res.json({
       ok: true,
+
       bomba: orden,
       bomba_reportada: e.bomba,
-      modo: s.control.modo,
+
+      modo: modoSolicitado,
+      modo_solicitado: modoSolicitado,
+      modo_reportado: e.modo,
+
       fallo: e.fallo,
       codigo: e.codigo
     });
