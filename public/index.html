@@ -24,7 +24,7 @@
 <body>
 
   <!-- =====================================================
-       ENCABEZADO
+       1. ENCABEZADO
        ===================================================== -->
 
   <header>
@@ -43,7 +43,11 @@
     </div>
 
     <div class="conn">
-      <span id="dot" class="dot"></span>
+      <span
+        id="dot"
+        class="dot"
+        aria-hidden="true"
+      ></span>
 
       <span id="connTxt" role="status">
         Conectando…
@@ -54,11 +58,13 @@
   <main>
 
     <!-- ===================================================
-         ADVERTENCIAS Y PROTECCIONES
+         2. ADVERTENCIAS DIDÁCTICAS
+         
+         Los mensajes no modifican las salidas del ESP32.
          =================================================== -->
 
     <section class="card wide">
-      <h2>Advertencias y protecciones</h2>
+      <h2>Advertencias y diagnóstico didáctico</h2>
 
       <div
         id="alarmas"
@@ -68,10 +74,16 @@
       >
         Esperando una lectura del ESP32…
       </div>
+
+      <p class="note">
+        Las advertencias permiten revisar la programación del
+        estudiante. No apagan la salida, no alteran los sensores
+        y no bloquean órdenes por condiciones del proceso.
+      </p>
     </section>
 
     <!-- ===================================================
-         DIAGRAMA DEL PROCESO
+         3. DIAGRAMA DEL PROCESO
          =================================================== -->
 
     <section class="card scene">
@@ -89,10 +101,13 @@
 
         <desc id="descripcionProceso">
           Diagrama del tanque subterráneo, la bomba P-01,
-          las tuberías y el tanque aéreo, con los sensores
-          LS-101, LSH-201 y LSL-202.
+          las tuberías y el tanque aéreo. Los indicadores
+          muestran los últimos estados reportados por el ESP32
+          para LS-101, LSH-201 y LSL-202. La altura del agua
+          representa zonas ilustrativas según los sensores.
         </desc>
 
+        <!-- Definiciones gráficas. -->
         <defs>
           <linearGradient
             id="w"
@@ -101,8 +116,15 @@
             x2="0"
             y2="1"
           >
-            <stop offset="0" stop-color="#4fb3ff"/>
-            <stop offset="1" stop-color="#1769c2"/>
+            <stop
+              offset="0"
+              stop-color="#4fb3ff"
+            />
+
+            <stop
+              offset="1"
+              stop-color="#1769c2"
+            />
           </linearGradient>
 
           <clipPath id="ca">
@@ -144,7 +166,11 @@
           stroke-width="2"
         />
 
-        <text x="10" y="248" class="lbl">
+        <text
+          x="10"
+          y="248"
+          class="lbl"
+        >
           Suelo
         </text>
 
@@ -170,7 +196,7 @@
           stroke-width="3"
         />
 
-        <!-- Agua del tanque aéreo. -->
+        <!-- Agua del tanque aéreo: actualizada por app.js. -->
         <g clip-path="url(#ca)">
           <rect
             id="wa"
@@ -194,6 +220,7 @@
           stroke-width="3"
         />
 
+        <!-- Etiqueta ilustrativa: Bajo, Medio, Lleno o Revisar. -->
         <text
           id="pctA"
           x="390"
@@ -221,7 +248,11 @@
           class="led"
         />
 
-        <text x="490" y="49" class="lbl">
+        <text
+          x="490"
+          y="49"
+          class="lbl"
+        >
           LSH-201
         </text>
 
@@ -242,7 +273,11 @@
           class="led"
         />
 
-        <text x="490" y="169" class="lbl">
+        <text
+          x="490"
+          y="169"
+          class="lbl"
+        >
           LSL-202
         </text>
 
@@ -299,7 +334,11 @@
           class="led"
         />
 
-        <text x="60" y="390" class="lbl">
+        <text
+          x="60"
+          y="390"
+          class="lbl"
+        >
           LS-101 · Subterráneo
         </text>
 
@@ -315,7 +354,10 @@
           stroke-linejoin="round"
         />
 
-        <!-- Animación del flujo. -->
+        <!--
+          Animación asociada a la salida de bomba reportada.
+          No confirma que exista flujo físico.
+        -->
         <path
           id="flow"
           d="M150 340 L240 340
@@ -389,17 +431,18 @@
       </svg>
 
       <p class="note">
-        La animación del nivel es ilustrativa y utiliza los estados
-        reportados por el ESP32; no representa un porcentaje medido.
+        El agua dibujada representa zonas ilustrativas según los
+        sensores; no es un porcentaje medido. La animación de bomba
+        y flujo representa la última salida reportada por el ESP32.
       </p>
     </section>
 
     <!-- ===================================================
-         ESTADO Y CONTROL
+         4. ESTADO REPORTADO Y SOLICITUDES DE CONTROL
          =================================================== -->
 
     <section class="card">
-      <h2>Estado</h2>
+      <h2>Estado reportado por el ESP32</h2>
 
       <div class="kpis">
         <div>
@@ -413,17 +456,21 @@
         </div>
 
         <div>
-          <span>Modo</span>
+          <span>Modo reportado por ESP32</span>
           <b id="kM">—</b>
         </div>
 
         <div>
-          <span>Última lectura</span>
+          <span>Última lectura recibida</span>
           <b id="kT" class="mono">—</b>
         </div>
       </div>
 
-      <table class="sens" aria-label="Estado de sensores">
+      <!-- Sensores: 1 significa agua presente en cada punto. -->
+      <table
+        class="sens"
+        aria-label="Últimos estados reportados de los sensores"
+      >
         <tbody>
           <tr>
             <td>LS-101</td>
@@ -445,18 +492,48 @@
         </tbody>
       </table>
 
-      <h2>Control de bomba P-01</h2>
+      <h2>Solicitudes de control · Bomba P-01</h2>
 
-      <div class="seg" role="group" aria-label="Modo de control">
-        <button type="button" data-m="auto">
+      <!--
+        Pulsar solicita un modo.
+        La clase "act" y aria-pressed reflejan el modo reportado
+        por el ESP32, según el último app.js.
+      -->
+      <div
+        class="seg"
+        role="group"
+        aria-label="Solicitar modo de control"
+        aria-describedby="modoInfo"
+      >
+        <button
+          type="button"
+          data-m="auto"
+          aria-pressed="false"
+        >
           Automático
         </button>
 
-        <button type="button" data-m="manual">
+        <button
+          type="button"
+          data-m="manual"
+          aria-pressed="false"
+        >
           Manual
         </button>
       </div>
 
+      <!--
+        app.js muestra aquí el modo reportado y el solicitado.
+        Si difieren, no se sustituye uno por el otro.
+      -->
+      <p id="modoInfo" class="note">
+        Esperando el modo reportado por el ESP32…
+      </p>
+
+      <!--
+        app.js habilita estos botones cuando el ESP32 reporta
+        modo manual. No los bloquea por sensores ni fallas.
+      -->
       <div class="btns">
         <button
           type="button"
@@ -478,21 +555,36 @@
       </div>
 
       <p class="note" id="note">
-        Los estados de sensores y de la salida de bomba son los
-        reportados por el ESP32. La web muestra advertencias y permite
-        solicitar órdenes manuales. El ESP32 debe aplicar las
-        protecciones por falta de agua, nivel alto e incoherencia
-        de sensores, incluso sin conexión.
+        Los indicadores muestran los últimos estados reportados
+        por el ESP32. Los botones envían solicitudes; no cambian
+        directamente el estado representado. El programa del
+        estudiante debe procesar las solicitudes y reportar
+        el resultado.
       </p>
 
       <p class="note">
-        El estado de la salida no confirma por sí solo que el motor
-        esté funcionando ni que exista flujo de agua.
+        La selección resaltada indica el modo reportado por el
+        ESP32, no una confirmación de que la solicitud más reciente
+        ya fue aplicada. Si ambos modos difieren, revisa el mensaje
+        situado debajo del selector.
+      </p>
+
+      <p class="note">
+        Las advertencias son informativas. La web no apaga la bomba
+        ni corrige automáticamente condiciones de sobrellenado,
+        falta de agua o incoherencia de sensores.
+      </p>
+
+      <p class="note">
+        El estado de la salida y su animación no confirman por sí
+        solos que el motor esté funcionando ni que exista flujo
+        de agua. Si no llegan muestras nuevas, se conserva la
+        última representación y se muestra una advertencia.
       </p>
     </section>
 
     <!-- ===================================================
-         GRÁFICA DEL HISTORIAL
+         5. GRÁFICA DEL HISTORIAL
          =================================================== -->
 
     <section class="card wide">
@@ -508,7 +600,8 @@
     </section>
 
     <!-- ===================================================
-         TABLA DE LECTURAS
+         6. TABLA DE LECTURAS
+         
          Mantiene las siete columnas utilizadas por app.js.
          =================================================== -->
 
@@ -538,7 +631,7 @@
               <th scope="col">LSH-201</th>
               <th scope="col">LSL-202</th>
               <th scope="col">Salida bomba</th>
-              <th scope="col">Modo</th>
+              <th scope="col">Modo reportado</th>
             </tr>
           </thead>
 
@@ -550,13 +643,27 @@
         Sin lecturas todavía. Cuando el ESP32 envíe datos por GET,
         aparecerán aquí. Las lecturas más recientes van arriba.
       </p>
+
+      <p class="note">
+        La columna de modo utiliza el valor guardado en cada muestra.
+        Los registros anteriores a la actualización de la API pueden
+        conservar el modo solicitado desde la web en lugar del modo
+        reportado por el ESP32.
+      </p>
     </section>
 
   </main>
 
+  <!-- =====================================================
+       7. PIE DE PÁGINA
+       ===================================================== -->
+
   <footer>
     UPT Aragua "Federico Brito Figueroa" ·
     Proyecto de automatización e IoT
+    <br>
+    Para prácticas con errores intencionales, utiliza simulación
+    o salidas de baja potencia.
   </footer>
 
   <noscript>
