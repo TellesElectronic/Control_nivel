@@ -898,14 +898,17 @@ if ($('clear')) {
 
 
 // ============================================================
-// 17. ANIMACIÓN DIDÁCTICA
-// ============================================================
+// ANIMACIÓN DIDÁCTICA SEGÚN LO REPORTADO POR EL ESP32
 //
-// Se conserva la última salida recibida aunque la muestra
-// sea antigua. La advertencia de antigüedad permanece visible.
+// La bomba depende únicamente del campo "bomba".
 //
-// Los sensores orientan el dibujo ilustrativo del agua,
-// pero NO apagan la representación de la bomba.
+// El agua se mueve hacia una representación ilustrativa:
+// - LSH activo: zona de tanque lleno.
+// - LSH inactivo y LSL activo: zona entre sensores.
+// - Ambos inactivos: zona por debajo del sensor inferior.
+//
+// Si llega "nivel", se utiliza ese valor enviado por el ESP32.
+// No se calcula el nivel acumulando tiempo de bomba encendida.
 // ============================================================
 
 function tick() {
@@ -916,36 +919,57 @@ function tick() {
 
   const estado = S.estado;
 
+  // Mostrar advertencias sin modificar las salidas.
   renderAvisos(estado);
+
+  // Mantener la representación de la última salida recibida.
   renderActuadores(estado);
 
   if (!estado.ts) return;
 
-  const ls = esActivo(estado.ls101);
   const lsh = esActivo(estado.lsh201);
   const lsl = esActivo(estado.lsl202);
-  const bomba = esActivo(estado.bomba);
 
-  if (lsh) {
-    // El superior activo se representa como tanque lleno.
-    // Si la bomba está encendida, su animación continúa
-    // y la advertencia de sobrellenado se muestra aparte.
-    est = 100;
+  let objetivo;
+
+  // Comprobar si el ESP32 envió un nivel explícito.
+  const tieneNivel =
+    estado.nivel !== undefined &&
+    estado.nivel !== null &&
+    String(estado.nivel).trim() !== '' &&
+    Number.isFinite(Number(estado.nivel));
+
+  if (tieneNivel) {
+    // Representar el valor enviado, limitado al rango del dibujo.
+    objetivo = Math.max(
+      0,
+      Math.min(100, Number(estado.nivel))
+    );
+  } else if (lsh) {
+    // Incluso si los sensores son incoherentes, se representa
+    // el superior activo y la advertencia explica el problema.
+    objetivo = 100;
+  } else if (lsl) {
+    // Altura simbólica: agua entre los sensores.
+    // No significa que se haya medido exactamente un 50 %.
+    objetivo = 50;
   } else {
-    // El inferior activo indica presencia de agua a esa altura.
-    if (lsl) {
-      est = Math.max(est, 20);
-    }
-
-    // Simulación visual de entrada de agua.
-    // No utiliza "fallo" ni la antigüedad para bloquearse.
-    if (bomba && ls) {
-      est = Math.min(100, est + 1.5);
-    }
+    // Altura simbólica por debajo del sensor inferior.
+    // No se afirma que el tanque esté completamente vacío.
+    objetivo = 5;
   }
 
-  // No se inventa un vaciado: no hay una señal de descarga
-  // ni una medición continua que permita calcularlo.
+  // Transición visual hacia el estado reportado.
+  // Permite que el dibujo suba o baje.
+  const diferencia = objetivo - est;
+  const paso = 3;
+
+  if (Math.abs(diferencia) <= paso) {
+    est = objetivo;
+  } else {
+    est += Math.sign(diferencia) * paso;
+  }
+
   renderWater();
 }
 
