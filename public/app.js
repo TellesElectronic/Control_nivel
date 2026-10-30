@@ -414,14 +414,15 @@ function render(estado, control) {
     }
   });
 
-  if ($('kM')) {
-    $('kM').textContent =
-      control.modo === 'manual' ? 'Manual' : 'Automático';
-  }
+if ($('kM')) {
+  const etiquetas = {
+    auto: 'Automático',
+    manual: 'Manual'
+  };
 
-  if ($('kT')) {
-    $('kT').textContent = horaLocal(estado.ts);
-  }
+  $('kM').textContent =
+    etiquetas[estado.modo] || 'No informado';
+}
 
   document.querySelectorAll('.seg button').forEach(boton => {
     boton.classList.toggle(
